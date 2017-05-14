@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<html>
+<head>
+	<script type="text/javascript" src="helpers/webgl-utils.js"></script>
+	<script type="text/javascript" src="helpers/initShaders.js"></script>
+	<script type="text/javascript" src="helpers/MV.js"></script>
+
+	<script type="text/javascript" src="aztec.js"></script>
+	<script type="text/javascript" src="imgLoad.js"></script>
+	<script type="text/javascript" src="sphere.js"></script>
+	<script type="text/javascript" src="cylinder.js"></script>
+	<script type="text/javascript" src="cube.js"></script>
+	<script type="text/javascript" src="mouseTrack.js"></script>
+	<script type="text/javascript" src="fbo.js"></script>
+
+<!-- Teaxture Shader -->
+	<script id="tex_vertexShader" type="x-shader/x-vertex">
+		attribute vec3 vPosition;
+		varying vec4 vP;
+		varying vec3 vN;
+		uniform float scale;
+		//texture
+		attribute vec2 texCoord;
+		varying vec2 ftexCoord;
+		// Visual Matrices
+		uniform mat4 LookAtMatrix;
+		uniform mat4 PerspMatrix;
+		uniform mat4 ModelMatrix;
+
+		void main(){
+			ftexCoord = texCoord;
+			vP = (ModelMatrix * vec4(vPosition, scale));
+			vN = normalize(vPosition.xyz);
+			gl_Position =  PerspMatrix * LookAtMatrix * ModelMatrix * vec4(vPosition, scale);
+		}
+	</script>
+	<script id="tex_fragmentShader" type="x-shader/x-fragment">
+		precision mediump float;
+		varying vec4 vP;
+		varying vec3 vN;
+		// texture
+		varying vec2 ftexCoord;
+		uniform samplerCube depthCubeMap;
+		uniform sampler2D texture;
+		// Light
+		uniform vec3 lightSource;
+
+		vec3 DirectIllumination(vec3 P, vec3 N, vec3 lightCentre, float lightBulbRadius, vec3 lightColour, float lightRadius, float cutoff){
+			// calculate normalized light vector and distance to sphere light surface
+			float r = lightBulbRadius;
+			vec3 L = lightCentre - P;
+			float distance = length(L);
+			float d = max(distance - r, 0.0)/lightRadius;
+			L /= distance;
+
+			// calculate basic attenuation
+			float denom = d/r + 1.0;
+			float attenuation = 1.0 / (denom*denom);
+
+			// scale and bias attenuation such that:
+			//   attenuation == 0 at extent of max influence
+			//   attenuation == 1 when d == 0
+			attenuation = (attenuation - cutoff) / (1.0 - cutoff);
+			attenuation = max(attenuation, 0.0);
+
+			float dot = 1.0 ; //max(dot(L, N), 0.0);
+			return lightColour * dot * attenuation;
+		}
+
+		void main()	{
+			vec3 texColor = texture2D(texture, ftexCoord).xyz;
+			vec3 Light = DirectIllumination(vP.xyz/vP.w, vN, lightSource, 0.2, texColor + vec3(30.0/255.0,0.0,0.0), 1.7, 0.03);
+
+			// shadow mapping
+			vec3 vPositionFromLight = (vP.xyz/vP.w-lightSource);
+			vec3 shadowCoord = vPositionFromLight.xyz; // /2.0 + 0.5;
+			vec4 rgbaDepth = textureCube(depthCubeMap, normalize(shadowCoord));
+			float localZcomp = max(abs(vPositionFromLight.x), max(abs(vPositionFromLight.y), abs(vPositionFromLight.z)));
+			float depth = rgbaDepth.r;
+			float objdepth = (1.0/localZcomp*(-2.0*5.0*0.1/(5.0-0.1))+(5.0+0.1)/(5.0-0.1)+1.0)*0.5;
+			float visibility = ( objdepth > depth + 0.005) ? 0.6 : 1.0;
+			//float visibility = ( length(vPositionFromLight) > depth + 0.0005) ? 0.5 : 1.0;
+
+			gl_FragColor = vec4( Light * 3.0 * visibility , 1.0 );
+		}
+
+
+	</script>
+
+<!-- Color Shader -->
+	<script id="col_vertexShader" type="x-shader/x-vertex">
+		attribute vec3 vPosition;
+		uniform float scale;
+		varying vec4 vP;
+		varying vec3 vN;
+		// Visual Matrices
+		uniform mat4 LookAtMatrix;
+		uniform mat4 PerspMatrix;
+		uniform mat4 ModelMatrix;
+
+		void main(){
+			vP = (ModelMatrix * vec4(vPosition, scale));
+			vN = normalize(vPosition.xyz);
+			gl_Position =  PerspMatrix * LookAtMatrix * ModelMatrix * vec4(vPosition, scale);
+		}
+	</script>
+	<script id="col_fragmentShader" type="x-shader/x-fragment">
+
+		precision mediump float;
+		uniform vec4 FragColor;
+		uniform vec3 lightSource;
+		uniform samplerCube depthCubeMap;
+		varying vec4 vP;
+		varying vec3 vN;
+
+		vec3 DirectIllumination(vec3 P, vec3 N, vec3 lightCentre, float lightBulbRadius, vec3 lightColour, float lightRadius, float cutoff){
+			// calculate normalized light vector and distance to sphere light surface
+			float r = lightBulbRadius;
+			vec3 L = lightCentre - P;
+			float distance = length(L);
+			float d = max(distance - r, 0.0)/lightRadius;
+			L /= distance;
+
+			// calculate basic attenuation
+			float denom = d/r + 1.0;
+			float attenuation = 1.0 / (denom*denom);
+
+			// scale and bias attenuation such that:
+			//   attenuation == 0 at extent of max influence
+			//   attenuation == 1 when d == 0
+			attenuation = (attenuation - cutoff) / (1.0 - cutoff);
+			attenuation = max(attenuation, 0.0);
+
+			float dot = 1.0 ; //max(dot(L, N), 0.0);
+			return lightColour * dot * attenuation;
+		}
+
+		void main()	{
+			vec3 Light = DirectIllumination(vP.xyz/vP.w, vN, lightSource, 0.2, FragColor.xyz + vec3(30.0/255.0,0.0,0.0) , 1.7, 0.03);
+			gl_FragColor =  vec4(Light, FragColor.w);
+		}
+	</script>
+
+<!-- FBO Shader -->
+	<script id="fbo_vertexShader" type="x-shader/x-vertex">
+		attribute vec3 vPosition;
+		uniform float scale;
+		// Visual Matrices
+		uniform mat4 LookAtMatrix;
+		uniform mat4 PerspMatrix;
+		uniform mat4 ModelMatrix;
+
+		void main(){
+			gl_Position =  PerspMatrix * LookAtMatrix * ModelMatrix * vec4(vPosition, scale);
+		}
+	</script>
+	<script id="fbo_fragmentShader" type="x-shader/x-fragment">
+		precision mediump float;
+		void main()
+		{
+			gl_FragColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
+		}
+	</script>
+</head>
+
+<body>
+<br/>
+
+	<canvas id="glcanvas" width="1000" height="600">
+		Your browser doesnt appear to support the HTML5 element.
+	</canvas>
+
+	<script> start(); </script><br/><br/>
+	click the sphere to move it.
+
+</body>
+</html>
